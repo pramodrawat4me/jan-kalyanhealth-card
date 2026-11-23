@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: janarogya-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: janarogya
+      POSTGRES_PASSWORD: janarogya
+      POSTGRES_DB: janarogya
+    ports:
+      - "5433:5432"
+    volumes:
+      - janarogya_pgdata:/var/lib/postgresql/data
+
+volumes:
+  janarogya_pgdata:

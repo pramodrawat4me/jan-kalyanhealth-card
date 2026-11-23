@@ -1,0 +1,1176 @@
+
+
+
+
+JAN AROGYA
+Hospital Discount Card Portal
+  DESKTOP APPLICATION — DEVELOPER TECHNICAL DOCUMENT  
+
+
+
+Property
+Value
+Project Name
+Jan Arogya Portal
+Document Type
+Developer Technical Document
+Platform
+Desktop Application (Electron.js)
+Version
+1.0
+Date
+June 26, 2026
+Status
+Draft for Development Review
+
+1. Project Overview
+Jan Arogya is a desktop-based hospital discount card management system. It enables registered partner operators to manage customer health cards, generate printable PDF cards with embedded QR codes, and access a global directory of empanelled hospitals — all from a Windows/macOS desktop application. The backend exposes a REST API consumed by both the desktop app and the Admin web portal.
+
+1.1 Objectives
+Provide partners a fast, offline-capable desktop interface for card management.
+Issue unique health card IDs and generate printable cards in PDF format.
+Embed QR codes on printed cards that display empanelled hospitals when scanned.
+Admin web portal to create, activate, and deactivate partner accounts.
+Data isolation: each partner sees only their own customers; hospital list is global.
+
+1.2 User Roles
+Role
+Access Medium
+Description
+Key Permissions
+Super Admin
+Web Browser (Admin Portal)
+Platform owner
+Full CRUD; partner management; global data view
+Partner/Agent
+Desktop App (Electron)
+CSC / clinic operator issuing cards
+Manage own customers; print cards; view hospitals
+Card-holder
+Any browser / phone camera
+End beneficiary
+Scan QR → view hospital list (no login required)
+
+1.3 Recommended Tech Stack
+Layer
+Technology
+Rationale
+Desktop App (Frontend)
+Electron.js + React.js
+Cross-platform (Windows/macOS/Linux); web tech inside native shell
+UI Framework
+Tailwind CSS + shadcn/ui
+Rapid UI; consistent teal design system matching existing app
+Backend API
+Node.js + Express.js
+Same language as Electron; easy JSON REST API
+Database
+MySQL 8.x
+Relational; suits partner→customer hierarchy; proven at scale
+ORM
+Prisma ORM
+Type-safe DB access; easy migrations
+File Storage
+AWS S3 / Local disk + CDN
+Customer photos and generated PDF cards
+PDF Generation
+Puppeteer (server-side)
+Renders HTML card template → high-quality PDF
+QR Code
+qrcode npm package
+Generate QR PNG embedded in PDF card
+Auth
+JWT (access + refresh tokens)
+Stateless; stored in Electron secure storage
+Auto-update
+electron-updater
+Push app updates to all partner desktops automatically
+Admin Portal
+React.js (web, separate repo)
+Browser-based admin dashboard
+
+2. System Architecture
+2.1 High-Level Architecture Diagram
+ℹ  The desktop app is a native Electron shell embedding a React SPA. It communicates with the backend REST API over HTTPS. The Admin portal is a separate browser-based React app. Both clients share the same API server.
+
+┌──────────────────────────────────────────────────────────────────┐
+│                  JAN AROGYA — SYSTEM ARCHITECTURE                │
+│                                                                  │
+│  ┌─────────────────────────────┐   ┌──────────────────────────┐ │
+│  │   DESKTOP APP (Electron)    │   │  ADMIN PORTAL (Browser)  │ │
+│  │   React UI + IPC Bridge     │   │  React.js Web App        │ │
+│  │   Secure Token Storage      │   │  JWT Admin Auth          │ │
+│  └────────────┬────────────────┘   └─────────────┬────────────┘ │
+│               │  HTTPS REST API                   │              │
+│               └──────────────────┬────────────────┘              │
+│                                  ▼                               │
+│              ┌───────────────────────────────────┐               │
+│              │       REST API SERVER              │               │
+│              │   Node.js + Express.js             │               │
+│              │   /api/v1/auth    /api/v1/partners │               │
+│              │   /api/v1/customers  /api/v1/cards │               │
+│              │   /api/v1/hospitals  /api/v1/admin │               │
+│              └────────────┬──────────────────────┘               │
+│                           │                                       │
+│               ┌───────────┴────────────┐                         │
+│               ▼                        ▼                         │
+│         ┌───────────┐         ┌──────────────────┐               │
+│         │  MySQL DB │         │  File Storage    │               │
+│         │  (Prisma) │         │  AWS S3 / Local  │               │
+│         └───────────┘         │  Photos + PDFs   │               │
+│                               └──────────────────┘               │
+└──────────────────────────────────────────────────────────────────┘
+
+2.2 Electron App Architecture (IPC Pattern)
+The Electron shell has two processes: Main Process (Node.js) and Renderer Process (React). Communication uses IPC (Inter-Process Communication). The renderer never directly calls Node.js APIs — all privileged operations go through preload scripts.
+
+Renderer (React UI)
+  ↕  window.electronAPI.invoke('channel', payload)   ← preload bridge
+Main Process (Node.js)
+  ↕  ipcMain.handle('channel', handler)
+  → HTTPS call to Backend API
+  → Return response to Renderer
+
+2.3 Database Schema
+Table: partners
+Column
+Type
+Constraints
+Description
+id
+INT
+PK, AUTO_INCREMENT
+Unique partner ID (e.g. 261)
+name
+VARCHAR(150)
+NOT NULL
+Partner / agent full name
+mobile
+VARCHAR(15)
+UNIQUE, NOT NULL
+Login credential (username)
+password_hash
+VARCHAR(255)
+NOT NULL
+Bcrypt hashed password
+state_id
+INT
+FK → states.id
+Partner's registered state
+city_id
+INT
+FK → cities.id
+Partner's city
+tahsil_id
+INT
+FK → tahsils.id
+Partner's tahsil
+is_active
+TINYINT(1)
+DEFAULT 1
+0 = deactivated by admin; blocks all logins
+created_at
+TIMESTAMP
+DEFAULT NOW()
+Account creation time
+
+Table: customers
+Column
+Type
+Constraints
+Description
+id
+INT
+PK, AUTO_INCREMENT
+Internal row ID
+card_id
+VARCHAR(20)
+UNIQUE, NOT NULL
+Auto-generated: YYYYMMDD + 6 random digits
+partner_id
+INT
+FK → partners.id
+Owning partner — enforces data isolation
+name
+VARCHAR(150)
+NOT NULL
+Customer full name
+father_husband
+VARCHAR(150)
+NOT NULL
+Father or husband name
+mobile
+VARCHAR(15)
+NOT NULL
+Contact number
+aadhar_no
+VARCHAR(255)
+NOT NULL
+Aadhaar (encrypted at rest, masked in UI)
+dob
+DATE
+NOT NULL
+Date of birth
+gender
+ENUM(male,female)
+NOT NULL
+Gender
+address
+TEXT
+NOT NULL
+Full residential address
+city_id
+INT
+FK → cities.id
+Customer's city
+photo_url
+VARCHAR(500)
+
+S3 path or local server path to photo
+validity_date
+DATE
+NOT NULL
+Card valid until (entry date + 3 years)
+entry_date
+DATE
+NOT NULL
+Card issue date
+is_deleted
+TINYINT(1)
+DEFAULT 0
+Soft delete flag
+created_at
+TIMESTAMP
+DEFAULT NOW()
+Record creation timestamp
+
+Table: hospitals
+Column
+Type
+Constraints
+Description
+id
+INT
+PK, AUTO_INCREMENT
+Hospital ID
+name
+VARCHAR(200)
+NOT NULL
+Hospital name
+address
+TEXT
+
+Full address
+city_id
+INT
+FK → cities.id
+City
+state_id
+INT
+FK → states.id
+State
+phone
+VARCHAR(20)
+
+Contact phone
+discount_details
+TEXT
+
+Discount description shown to card holders
+is_active
+TINYINT(1)
+DEFAULT 1
+Admin can deactivate
+
+Tables: states / cities / tahsils (Location Hierarchy)
+Table
+Key Columns
+Purpose
+states
+id, name
+Master list of Indian states
+cities
+id, name, state_id
+Cities linked to states
+tahsils
+id, name, city_id, state_id
+Tahsils linked to cities and states
+
+3. REST API Specification
+ℹ  Base URL: https://api.janarogya.in/api/v1   |   All protected routes require header: Authorization: Bearer <JWT_ACCESS_TOKEN>
+
+3.1 Authentication Endpoints
+Method
+Endpoint
+Auth?
+Description
+POST
+/auth/login
+No
+Partner login — returns JWT access + refresh token
+POST
+/auth/refresh
+No
+Refresh access token using refresh token
+POST
+/auth/change-password
+Yes
+Change password for authenticated partner
+POST
+/admin/auth/login
+No
+Admin login — separate token scope
+
+POST /auth/login
+Request Body:
+{ "mobile": "9098475371", "password": "Secret@123" }
+Success Response (200):
+{ "success": true,
+  "accessToken": "<JWT — expires 8h>",
+  "refreshToken": "<JWT — expires 30d>",
+  "partner": { "id": 261, "name": "Boby Rawat", "mobile": "9098475371", "is_active": 1 } }
+Error — Deactivated (403):
+{ "success": false, "error": "ACCOUNT_DEACTIVATED",
+  "message": "Your account has been deactivated. Contact admin." }
+
+3.2 Customer Endpoints
+Method
+Endpoint
+Auth?
+Description
+GET
+/customers
+Partner
+List all customers for authenticated partner (paginated)
+POST
+/customers
+Partner
+Add new customer (multipart/form-data incl. photo)
+GET
+/customers/:id
+Partner
+Get full customer detail (partner-scoped)
+DELETE
+/customers/:id
+Partner
+Soft-delete customer (sets is_deleted=1)
+GET
+/customers/today
+Partner
+Customers added today by this partner
+GET
+/customers/find
+Partner
+Find card by mobile, DOB, or card_id
+
+POST /customers — Form Fields (multipart/form-data)
+Field
+Type
+Required
+Validation
+name
+string
+Yes
+Min 2 chars, max 150
+father_husband
+string
+Yes
+Min 2 chars, max 150
+mobile
+string
+Yes
+Exactly 10 digits
+aadhar_no
+string
+Yes
+Exactly 12 digits; encrypted before storage
+address
+string
+Yes
+Max 500 chars
+city_id
+integer
+Yes
+Must exist in cities table
+dob
+date string
+Yes
+Format: DD-MM-YYYY; must be past date
+gender
+enum
+Yes
+Accepted values: male or female
+photo
+file
+Yes
+JPEG/PNG only; max 2 MB; resized to 400×400 server-side
+
+GET /customers — Query Parameters
+GET /customers?page=1&limit=20&search=Nitin
+Response includes: data[] array, total count, current page, total pages.
+
+GET /customers/find — Query Parameters
+GET /customers/find?mobile=6266607840
+GET /customers/find?card_id=20260619593841
+GET /customers/find?mobile=6266607840&dob=15-09-2007
+
+3.3 Card & Printing Endpoints
+Method
+Endpoint
+Auth?
+Description
+GET
+/cards/print/:customer_id
+Partner
+Generate PDF card; streams PDF binary or returns S3 URL
+GET
+/cards/printings
+Partner
+Full printing history for this partner; sorted newest first
+GET
+/cards/today
+Partner
+Cards issued today by this partner
+GET
+/cards/public/:card_id
+None
+QR scan public page — returns hospital list HTML/JSON
+
+3.4 Hospital Endpoints
+Method
+Endpoint
+Auth?
+Description
+GET
+/hospitals
+Partner
+Global list of all active hospitals (not partner-scoped)
+POST
+/admin/hospitals
+Admin
+Add new hospital
+PUT
+/admin/hospitals/:id
+Admin
+Update hospital details or discount info
+PATCH
+/admin/hospitals/:id/toggle
+Admin
+Activate or deactivate hospital
+
+3.5 Admin — Partner Management Endpoints
+Method
+Endpoint
+Auth?
+Description
+GET
+/admin/partners
+Admin
+List all partners with status, card count
+POST
+/admin/partners
+Admin
+Create new partner account
+GET
+/admin/partners/:id
+Admin
+Single partner detail with stats
+PATCH
+/admin/partners/:id/activate
+Admin
+Set is_active = 1
+PATCH
+/admin/partners/:id/deactivate
+Admin
+Set is_active = 0; immediately blocks login
+DELETE
+/admin/partners/:id
+Admin
+Hard delete partner; customers reassigned or archived
+
+3.6 Location Endpoints
+Method
+Endpoint
+Auth?
+Description
+GET
+/locations/states
+No
+All states list
+GET
+/locations/cities/:state_id
+No
+Cities filtered by state
+GET
+/locations/tahsils/:city_id
+No
+Tahsils filtered by city
+
+4. Desktop Application — Feature Specifications
+ℹ  All features below are part of the Electron desktop app. The app stores the JWT token in Electron's safeStorage (encrypted on disk). On launch, it checks token validity and redirects to login if expired.
+
+4.1 Login Screen
+First screen on app launch if no valid session exists.
+Element
+Detail
+Mobile Number input
+Text field; numeric keyboard; 10-digit validation
+Password input
+Password field; show/hide toggle
+Login button
+Calls POST /auth/login; stores accessToken + refreshToken via safeStorage
+Error handling
+Show inline error for wrong credentials or deactivated account
+Auto-login
+If valid token exists in safeStorage, skip login screen and go to Dashboard
+
+4.2 Dashboard (Home Screen)
+Main navigation hub after login. Displays 6 feature tiles in a 2×3 grid layout. Also shows partner name and ID in the top header bar.
+Tile
+Icon
+Navigation Target
+Description
+Customers
+Grid/list icon
+Customers List screen
+View and manage all partner customers
+Add Customer
+Person + plus icon
+Add Customer form
+Register a new card-holder
+Today's Card
+ID card icon
+Today's Card screen
+Cards created on current date
+Total Printing
+Printer icon
+Total Printing screen
+Cumulative printing history
+Find Card
+Magnifier icon
+Find Card screen
+Search card by mobile/ID
+Hospitals
+Hospital icon
+Hospitals list screen
+Global empanelled hospital directory
+Bottom/side navigation bar contains: Home, Support, Profile tabs.
+
+4.3 Add Customer
+Multi-field form for registering a new customer and issuing a card. Submitted via POST /customers as multipart/form-data.
+Field
+Input Type
+Validation
+Notes
+Photo
+File picker / webcam capture
+JPEG/PNG, max 2MB
+Click icon to open OS file picker or capture from webcam via Electron
+Name
+Text input
+Required, 2–150 chars
+
+Father/Husband
+Text input
+Required, 2–150 chars
+Label shows 'Father or Husband / पिता या पति'
+Mobile No.
+Number input
+Required, exactly 10 digits
+
+Aadhaar No.
+Number input
+Required, exactly 12 digits
+Masked in display after save
+Address
+Textarea
+Required
+
+Select City
+Dropdown
+Required
+Populated from GET /locations/cities/:state_id
+Date of Birth
+3 dropdowns
+Required; valid past date
+Separate Day / Month / Year selects
+Gender
+Radio buttons
+Required
+Male / Female
+Continue button
+Submit
+All fields validated first
+On success → show card detail & offer to print
+ℹ  Card ID (आई.डि.) and validity date are NOT entered by the partner — they are auto-generated by the server and returned in the API response.
+
+4.4 Customers List
+Displays all customers registered under the authenticated partner. No other partner's data is ever returned.
+UI Element
+Behaviour
+Total card count header
+Shows 'Total No. of Cards: N' from API count field
+Search by ID field
+Client-side instant filter on card_id as user types
+Customer row
+Photo thumbnail (60×60px), Name + Age, Father/Husband name, Card ID in red (#DC2626)
+View Details button
+Navigates to Customer Detail screen for that record
+Delete (trash) button
+Confirmation dialog → DELETE /customers/:id (soft delete)
+Pagination
+Load 20 per page; scroll-to-load or page buttons
+
+4.5 Customer Detail Screen
+Full profile view for a selected customer. Data from GET /customers/:id.
+Hindi Label
+English Field
+DB Source
+नाम
+Name
+customers.name
+लिंग / आयु
+Gender / Age (calculated)
+customers.gender + customers.dob
+पिता/पति
+Father or Husband
+customers.father_husband
+आई.डि.
+Card ID (shown in red)
+customers.card_id
+जन्म तिथि
+Date of Birth
+customers.dob
+वैधता
+Validity Date
+customers.validity_date
+प्रवेश तिथि
+Entry/Issue Date
+customers.entry_date
+मोब नं
+Mobile Number
+customers.mobile
+पता
+Address
+customers.address
+शहर
+City
+city name via city_id join
+Print Card button on this screen calls GET /cards/print/:id and opens the returned PDF in the system's default PDF viewer or triggers an OS print dialog.
+
+4.6 Today's Card
+Shows all cards issued by the authenticated partner on the current date. Date is displayed in the header as MM/DD/YY. If count is 0, displays an empty-state illustration with 'Data not found'. Data sourced from GET /cards/today.
+
+4.7 Total Printing
+Complete list of every card that has been printed/generated by this partner. Header shows cumulative total (e.g. 3597). Each row shows photo thumbnail, name, age, father, card ID. Arrow button on each row re-opens the Customer Detail screen for re-printing.
+
+4.8 Find Card
+Allows searching for any card without scrolling the full customer list. Useful for walk-in customers who need their card reprinted.
+Input
+Type
+Required?
+Notes
+Mobile No.
+10-digit number
+Yes (primary)
+Minimum required field to search
+Date of Birth
+dd-MM-YYYY
+Optional
+Narrows results if multiple customers share same mobile
+ID / Card ID
+Text
+Optional
+Direct lookup by card_id
+On Search → calls GET /customers/find with provided params. If found, opens Customer Detail screen. If not found, displays inline error message.
+
+4.9 Hospitals
+Global read-only list of all active empanelled hospitals. Not partner-scoped — every partner sees the same directory. Data from GET /hospitals.
+Displayed Field
+Source
+Hospital Name
+hospitals.name
+Address
+hospitals.address
+City
+city name via join
+Phone
+hospitals.phone
+Discount Details
+hospitals.discount_details
+ℹ  The same hospital list is shown on the QR code public scan page — no login required for that page.
+
+4.10 Profile Screen
+Accessible from bottom navigation bar. Shows authenticated partner's name, mobile number, and Partner ID. Contains two action buttons:
+Change Password → navigates to Change Password screen.
+Logout → clears stored tokens from safeStorage; redirects to Login screen.
+
+4.11 Change Password Screen
+Field
+Validation
+New Password
+Min 8 chars; must contain letter + number
+Confirm Password
+Must match New Password exactly
+Update button
+Calls POST /auth/change-password; shows success toast; stays on screen
+⚠  The Update button on this screen must use the teal (#1B7A78) colour to match the design system — NOT black as shown in the reference screenshot.
+
+5. Admin Web Portal Specifications
+The Admin portal is a separate React.js web application accessed via browser by the Super Admin only. It is NOT part of the Electron desktop app. It shares the same backend API server but uses admin-scoped JWT tokens.
+
+5.1 Admin Feature Modules
+Module
+Features
+Partner Management
+Create partners; assign State/City/Tahsil; view all partners; activate/deactivate toggle
+Customer Overview
+View customers across ALL partners; search by card ID / mobile / name; export to CSV
+Hospital Management
+Add, edit, activate/deactivate hospitals; manage discount descriptions
+Printing Reports
+Total printings per partner per date range; export to PDF/CSV
+Location Master
+Manage State → City → Tahsil hierarchy; add new locations
+Dashboard Analytics
+Total cards issued, active partners, cards today, hospital count — summary widgets
+
+5.2 Create Partner Form
+Admin fills this form to register a new partner account. Partner is assigned a numeric ID automatically.
+Field
+Input Type
+Notes
+Full Name
+Text input
+Partner / agent name
+Mobile Number
+Number input
+10 digits; used as login username; must be unique
+Password
+Password
+Temporary password; partner should change on first login
+Select State
+Dropdown
+GET /locations/states
+Select City
+Dropdown
+GET /locations/cities/:state_id — re-loads when state changes
+Select Tahsil
+Dropdown
+GET /locations/tahsils/:city_id — re-loads when city changes
+
+5.3 Partner Activate / Deactivate
+Admin can toggle any partner between Active and Inactive at any time using the toggle switch or button in the partners list.
+State
+Behaviour
+Active (is_active = 1)
+Partner can log in to desktop app and use all features normally
+Inactive (is_active = 0)
+API returns HTTP 403 with ACCOUNT_DEACTIVATED error on login attempt
+Data retention
+Customer records are preserved; they are never deleted on deactivation
+Re-activation
+Admin flips toggle back; partner can login immediately
+
+6. Card ID Generation & PDF Card
+6.1 Card ID Format
+The Card ID (आई.डि.) is auto-generated on the server when a new customer record is created.
+Format: YYYYMMDD + 6-digit random number
+Example: 2026-06-19 + 593841  =  20260619593841
+
+6.2 Server-Side Generation (Node.js)
+function generateCardId() {
+  const today = new Date();
+  const yyyy  = today.getFullYear();
+  const mm    = String(today.getMonth() + 1).padStart(2, '0');
+  const dd    = String(today.getDate()).padStart(2, '0');
+  const rand  = Math.floor(100000 + Math.random() * 900000); // 6 digits
+  return `${yyyy}${mm}${dd}${rand}`;
+}
+// Always check DB uniqueness before saving — retry if collision
+
+6.3 Validity Date Calculation
+const entryDate    = new Date();
+const validityDate = new Date(entryDate);
+validityDate.setFullYear(validityDate.getFullYear() + 3); // 3 years
+
+6.4 PDF Card Layout
+When a partner clicks Print Card, the server generates a PDF using Puppeteer and returns it as a binary stream. The Electron app opens it in the system PDF viewer or sends it directly to the printer via Electron's webContents.print().
+Card Section
+Content & Specification
+Card Size
+A4 page; one card per page OR 2-up for physical card printing
+Border
+2px solid teal (#1B7A78) all around
+Header
+Jan Arogya logo (left) + 'Hospital Discount Card' title (centre) on teal background
+Photo
+Customer photo — 120×120px, rounded 8px corners, left-aligned
+Left Info Block
+Name, Gender/Age, Father/Husband, Card ID (bold red), Date of Birth
+Right Info Block
+Validity Date, Entry Date, Mobile, Address, City
+QR Code
+128×128px, bottom-right corner; encodes public hospital-list URL
+Footer
+Issued by: <partner name> | Partner ID: <id> | Helpline: <number>
+
+6.5 PDF Generation — Server Code (Node.js + Puppeteer)
+const puppeteer = require('puppeteer');
+const QRCode    = require('qrcode');
+
+async function generateCardPDF(customer) {
+  const qrUrl  = `https://janarogya.in/hospitals?card=${customer.card_id}`;
+  const qrData = await QRCode.toDataURL(qrUrl, { width: 128 });
+  const html   = renderCardTemplate(customer, qrData); // HTML template
+  const browser = await puppeteer.launch({ args: ['--no-sandbox'] });
+  const page    = await browser.newPage();
+  await page.setContent(html, { waitUntil: 'networkidle0' });
+  const pdfBuffer = await page.pdf({
+    format: 'A4', printBackground: true,
+    margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' }
+  });
+  await browser.close();
+  return pdfBuffer; // Stream to client or save to S3
+}
+
+6.6 QR Code — Public Scan Endpoint
+The QR code on every printed card encodes the following URL:
+https://janarogya.in/hospitals?card=<card_id>
+When scanned by hospital staff or patient, GET /cards/public/:card_id returns a mobile-optimised HTML page showing:
+Customer name and card validity status (valid / expired).
+Complete list of empanelled hospitals with name, address, phone, and discount details.
+No login required — fully public endpoint.
+ℹ  Rate-limit this public endpoint to 200 requests/minute per IP to prevent abuse. Never include sensitive PII (Aadhaar, address) in the QR URL or scan result page.
+
+7. Electron App Project Structure
+7.1 Folder Structure
+janarogya-desktop/
+├── main/                       ← Electron Main Process
+│   ├── main.js                 ← App entry; creates BrowserWindow
+│   ├── preload.js              ← Exposes safe IPC API to renderer
+│   ├── ipcHandlers.js          ← Handles all IPC channels
+│   └── safeStorage.js          ← Token encryption/decryption helpers
+├── renderer/                   ← React App (Renderer Process)
+│   ├── src/
+│   │   ├── pages/              ← One file per screen
+│   │   │   ├── Login.jsx
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── Customers.jsx
+│   │   │   ├── AddCustomer.jsx
+│   │   │   ├── CustomerDetail.jsx
+│   │   │   ├── TodayCard.jsx
+│   │   │   ├── TotalPrinting.jsx
+│   │   │   ├── FindCard.jsx
+│   │   │   ├── Hospitals.jsx
+│   │   │   ├── Profile.jsx
+│   │   │   └── ChangePassword.jsx
+│   │   ├── components/         ← Reusable UI components
+│   │   ├── api/                ← Axios instance + API call functions
+│   │   ├── store/              ← Zustand / Redux global state
+│   │   └── App.jsx             ← Router + layout wrapper
+│   └── index.html
+├── backend/                    ← Node.js + Express API server
+│   ├── routes/
+│   ├── controllers/
+│   ├── middleware/
+│   ├── prisma/schema.prisma
+│   └── server.js
+├── package.json                ← Electron build config
+└── electron-builder.yml        ← Packaging & auto-update config
+
+7.2 Screen Navigation Map
+Screen
+Component File
+Route / Trigger
+Login
+Login.jsx
+App launch; no valid token in safeStorage
+Dashboard
+Dashboard.jsx
+Successful login; default screen
+Customers List
+Customers.jsx
+Click 'Customers' tile on Dashboard
+Customer Detail
+CustomerDetail.jsx
+Click 'View Details' in Customers list
+Add Customer
+AddCustomer.jsx
+Click 'Add Customer' tile on Dashboard
+Today's Card
+TodayCard.jsx
+Click 'Today's Card' tile on Dashboard
+Total Printing
+TotalPrinting.jsx
+Click 'Total Printing' tile on Dashboard
+Find Card
+FindCard.jsx
+Click 'Find Card' tile on Dashboard
+Hospitals
+Hospitals.jsx
+Click 'Hospitals' tile on Dashboard
+Profile
+Profile.jsx
+Click 'Profile' in bottom nav bar
+Change Password
+ChangePassword.jsx
+Click 'Change Password' on Profile screen
+
+7.3 IPC Channel Reference
+IPC Channel
+Direction
+Purpose
+auth:login
+Renderer → Main
+Send credentials; Main calls API; store token
+auth:logout
+Renderer → Main
+Clear safeStorage tokens
+auth:getToken
+Renderer → Main
+Retrieve stored access token for API calls
+print:card
+Renderer → Main
+Send PDF buffer; Main opens print dialog
+app:checkUpdate
+Main → Renderer
+Notify renderer of available app update
+
+8. Security Requirements
+Area
+Requirement
+Token Storage
+Use Electron safeStorage (OS keychain-backed) — NEVER localStorage or plain files
+JWT Expiry
+Access token: 8 hours; Refresh token: 30 days; rotate on each refresh
+Password Hashing
+Bcrypt with cost factor minimum 12
+Data Isolation
+EVERY customer query must include WHERE partner_id = <authenticated_id> enforced at API layer
+Admin Separation
+Admin JWT scope != partner JWT scope; middleware checks role on every admin route
+Aadhaar Storage
+AES-256-GCM encryption at rest; display only last 4 digits in UI
+File Upload
+Validate MIME type server-side; max 2 MB; rename to UUID; strip EXIF; reject executables
+Rate Limiting
+Login: 5 attempts per 15 min per IP; QR public: 200/min per IP
+HTTPS Only
+All API traffic over TLS 1.2+; HTTP requests redirected to HTTPS
+Content-Security-Policy
+Set CSP in Electron BrowserWindow; disable nodeIntegration in renderer; use contextIsolation
+Auto-Update Signing
+Sign Electron app with code-signing certificate; verify update signature before install
+
+9. Error Handling & API Response Format
+9.1 Standard Response Envelope
+// Success
+{ "success": true, "data": { ... }, "message": "Customer added successfully", "meta": { "page": 1, "total": 71 } }
+
+// Error
+{ "success": false, "error": "VALIDATION_ERROR", "message": "Mobile number must be 10 digits", "fields": { "mobile": "Invalid" } }
+
+9.2 HTTP Status Code Reference
+Status
+Meaning
+When Used
+200
+OK
+Successful GET, PATCH, DELETE
+201
+Created
+Successful POST (new customer/partner/hospital)
+400
+Bad Request
+Validation errors; missing required fields
+401
+Unauthorized
+Missing, expired, or invalid JWT token
+403
+Forbidden
+Partner deactivated; accessing another partner's data; wrong role
+404
+Not Found
+Customer / hospital / partner ID not found
+409
+Conflict
+Duplicate mobile or Aadhaar number
+413
+Payload Too Large
+Uploaded photo exceeds 2 MB limit
+429
+Too Many Requests
+Rate limit exceeded
+500
+Internal Server Error
+Unhandled exceptions; logged to server error log
+
+9.3 Desktop App Error Handling
+Network errors (no internet): show toast notification 'No internet connection. Please check your network.'
+401 response: auto-refresh token once; if refresh fails, logout and redirect to Login screen.
+403 ACCOUNT_DEACTIVATED: show modal 'Your account has been deactivated. Please contact the administrator.' and force logout.
+500 server error: show generic 'Something went wrong. Please try again.' toast with retry button.
+File too large: validate size client-side before upload; show inline error below photo field.
+
+10. UI / UX Design System
+10.1 Colour Palette
+Token
+Hex Value
+Usage
+Primary Teal
+#1B7A78
+App bar, primary buttons, headings, card ID highlight
+Light Teal
+#E8F4F4
+Alternating table rows, callout backgrounds, card backgrounds
+Dark Navy
+#1A1A2E
+Body text, secondary headings
+Text Gray
+#6B7280
+Labels, metadata, placeholder text
+Card ID Red
+#DC2626
+Card ID (आई.डि.) text throughout the app — signature style
+Delete Red
+#EF4444
+Delete / logout buttons
+White
+#FFFFFF
+App background, button text on teal
+Light Gray
+#F3F4F6
+Input field backgrounds
+Border Gray
+#D1D5DB
+Input borders, table borders, dividers
+
+10.2 Typography
+Element
+Font
+Size
+Weight
+App Bar Title
+Arial / Inter
+18px
+Bold
+Page Heading
+Arial / Inter
+22px
+Bold
+Section Head
+Arial / Inter
+16px
+SemiBold
+Body Text
+Arial / Inter
+14px
+Regular
+Label
+Arial / Inter
+12px
+Medium
+Card ID
+Arial / Inter
+14px
+Bold — Colour: #DC2626
+Code / IDs
+Courier New
+13px
+Regular
+
+10.3 Component Standards
+All primary action buttons: background #1B7A78, white text, 8px border radius, 48px height minimum.
+Destructive buttons (Delete, Logout): background #EF4444, white text — same sizing.
+Input fields: 1px solid #D1D5DB border, #F3F4F6 background, 8px radius, 44px height.
+Card tiles on Dashboard: white background, 8px radius, subtle shadow, 160×160px minimum touch target.
+Customer photo thumbnails: 60×60px in lists, 120×120px in detail view, 8px border radius.
+Empty state screens: centred illustration + 'Data not found' text in #6B7280.
+
+11. Deployment & Environment Setup
+11.1 Backend API Deployment
+Environment
+URL
+Purpose
+Development
+http://localhost:3000
+Local development and testing
+Staging
+https://staging-api.janarogya.in
+QA and client review
+Production
+https://api.janarogya.in
+Live system — all partners
+
+11.2 Backend Environment Variables (.env)
+# Database
+DATABASE_URL=mysql://user:password@localhost:3306/janarogya_db
+
+# JWT
+JWT_ACCESS_SECRET=<random-64-char-string>
+JWT_REFRESH_SECRET=<different-random-64-char-string>
+JWT_ACCESS_EXPIRES=8h
+JWT_REFRESH_EXPIRES=30d
+
+# File Storage
+AWS_S3_BUCKET=janarogya-assets
+AWS_REGION=ap-south-1
+AWS_ACCESS_KEY_ID=<key>
+AWS_SECRET_ACCESS_KEY=<secret>
+
+# App
+PORT=3000
+BASE_URL=https://janarogya.in
+ENCRYPTION_KEY=<32-byte-hex-key-for-aadhaar-AES>
+
+11.3 Electron Desktop App Build & Distribution
+Step
+Command / Tool
+Notes
+Install deps
+npm install
+In project root
+Dev mode
+npm run electron:dev
+Hot-reload React + Electron
+Build React
+npm run build:renderer
+Compiles React to /renderer/dist
+Package app
+npm run dist
+electron-builder; produces .exe (Windows) or .dmg (macOS)
+Auto-update
+electron-updater
+Configure update server URL in electron-builder.yml
+Code signing
+Windows: .pfx cert; macOS: Apple Developer cert
+Required for auto-update trust
+
+11.4 Supported Desktop Platforms
+Platform
+Minimum Version
+Installer Format
+Windows
+Windows 10 (64-bit)
+.exe NSIS installer or .msi
+macOS
+macOS 11 Big Sur
+.dmg disk image
+Linux
+Ubuntu 20.04+
+.AppImage or .deb (optional)
+ℹ  Minimum display resolution: 1280×720px. Recommended: 1920×1080px. The app window should be resizable with a minimum size of 1024×600px.
+
+12. Version History
+Version
+Date
+Author
+Summary of Changes
+1.0
+June 26, 2026
+Development Team
+Initial release — full desktop app spec; API spec; DB schema; PDF/QR; security; UI system; Electron project structure
+
+
+— END OF DOCUMENT —

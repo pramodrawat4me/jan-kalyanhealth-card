@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand palette — matched to the official Jan Kalyan Health Card logo
+     (navy / bright green / medical red). Legacy `teal` token names are kept
+     so existing utility classes resolve to the navy brand blue. */
+  --color-teal: #093c71;
+  --color-teal-hover: #062b50;
+  --color-teal-light: #e8f0fe;
+  --color-brand-green: #59a633;
+  --color-brand-green-light: #eef7eb;
+  --color-navy: #093c71;
+  --color-ink: #1c2b2a;
+  --color-muted: #64748b;
+  --color-card-id: #d32f2f;
+  --color-danger: #ef4444;
+  --color-danger-hover: #dc2626;
+  --color-surface: #f1f5f9;
+  --color-line: #cbd5e1;
+
+  --font-sans: "Inter", "Noto Sans Devanagari", system-ui, sans-serif;
+  --font-devanagari: "Noto Sans Devanagari", "Inter", system-ui, sans-serif;
+
+  /* Shell/surface tokens for the redesigned authenticated app — kept
+     additive alongside Tailwind's built-in radius/shadow scale rather than
+     renaming existing utilities everywhere, to avoid a risky wholesale
+     find/replace across already-working screens. */
+  --radius-surface: 0.875rem;
+  --shadow-elevated: 0 20px 40px -12px rgba(9, 60, 113, 0.22), 0 8px 16px -8px rgba(9, 60, 113, 0.12);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    font-family: var(--font-sans);
+  }
+
+  body {
+    margin: 0;
+    /* A quiet echo of the login page's navy/green gradient instead of a
+       flat slate fill — every authenticated screen sits on this, so it's
+       the single highest-leverage place to give the app some depth back. */
+    background: linear-gradient(180deg, #eef4fb 0%, #f3f7fa 40%, #eef6f0 100%);
+    color: var(--color-ink);
+  }
+
+  ::selection {
+    background-color: var(--color-teal-light);
+  }
+
+  /* Sitewide pointer feedback — every clickable surface (buttons, links,
+     custom [role=button]/tab/switch widgets, table rows and cards used as
+     row-level actions, native form controls) gets a pointer cursor, and
+     anything explicitly disabled gets not-allowed instead. Scoped broadly
+     on purpose so newly added interactive elements inherit this for free
+     rather than needing a manual `cursor-pointer` class each time. */
+  a[href],
+  button:not(:disabled),
+  input[type="button"]:not(:disabled),
+  input[type="submit"]:not(:disabled),
+  input[type="reset"]:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="range"]:not(:disabled),
+  select:not(:disabled),
+  label:has(input:not(:disabled)),
+  summary,
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"]:not([aria-disabled="true"]),
+  [role="switch"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([aria-disabled="true"]),
+  [role="option"]:not([aria-disabled="true"]),
+  [data-clickable="true"] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  input:disabled,
+  select:disabled,
+  textarea:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}
+
+@layer utilities {
+  /* Subtle, purposeful entrance for the login/landing experience — short
+     duration and a small offset so it reads as "settling in", not a
+     flashy animated intro. */
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-up {
+    animation: fade-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* Shared entrance/exit motion for the app shell's dropdowns, drawers, and
+     dialogs — short and purposeful per the "restrained microinteractions"
+     direction, never decorative or attention-grabbing on its own. */
+  @keyframes fade-scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97) translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .animate-fade-scale-in {
+    animation: fade-scale-in 0.14s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes slide-in-left {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  .animate-slide-in-left {
+    animation: slide-in-left 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .animate-overlay-in {
+    animation: overlay-in 0.18s ease-out both;
+  }
+}

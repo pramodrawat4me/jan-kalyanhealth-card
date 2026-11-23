@@ -1,0 +1,27 @@
+# Python / backend
+backend/.venv
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/.pytest_cache
+backend/storage/
+backend/.env
+
+# Node / frontend
+frontend/node_modules
+frontend/dist
+frontend/.env
+*.local
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+
+# Misc local artifacts
+*.log
+.vercel/
+frontend/.vercel/
+WhatsApp Unknown*/
